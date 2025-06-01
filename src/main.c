@@ -112,6 +112,9 @@ void update_led_matrix(void);
 // Atualiza o display OLED
 void update_display();
 
+// Atualiza o buzzer
+void update_buzzer();
+
 // Atualiza os sinais de saída
 void update_outputs();
 
@@ -161,6 +164,7 @@ static volatile int last_a = 0, last_b = 0, last_sw = 0;
 const int debounce = 270;                         // Tempo de debounce para os botões
 volatile bool publish_parking_status_flag = true; // Sinaliza para publicar o status do estacionamento
 static volatile int free_parking_lots = 0;
+static volatile int parking_lot_status[PARKING_LOT_SIZE] = {0};
 ssd1306_t ssd;
 
 int main(void)
@@ -172,8 +176,10 @@ int main(void)
     init_btns();          // Inicializa os botões
     init_btn(BTN_SW_PIN); // Inicializa o botão do joystick
     init_leds();          // Inicializa os LEDs
-    ws2812b_init(LED_MATRIX_PIN);
-    init_display(&ssd);
+    ws2812b_init(LED_MATRIX_PIN); // Inicializa a matriz de LEDs
+    init_display(&ssd); // Inicializa o display OLED
+    init_buzzer(BUZZER_A_PIN, 4.0); // Inicializa o buzzer
+
 
     update_outputs(); // Atualiza os LEDs e a matriz de LEDs
 
@@ -373,6 +379,41 @@ void update_display()
     ssd1306_send_data(&ssd);        // Envia os dados para o display
 }
 
+// Atualiza o buzzer
+void update_buzzer()
+{
+    // Verifica qual foi a mudança de status
+    for (int i = 0; i < PARKING_LOT_SIZE; i++)
+    {
+        if (parking_lots[i].status != parking_lot_status[i])
+        {
+            parking_lot_status[i] = parking_lots[i].status;
+
+            // Toca o buzzer se a vaga estiver ocupada
+            if (parking_lots[i].status == 1)
+            {
+                play_tone(BUZZER_A_PIN, 300);
+                sleep_ms(250); // Toca o buzzer por 250ms
+                stop_tone(BUZZER_A_PIN);
+            }
+            // Toca o buzzer se a vaga estiver livre
+            else if (parking_lots[i].status == 0)
+            {
+                play_tone(BUZZER_A_PIN, 2000);
+                sleep_ms(250); // Toca o buzzer por 250ms
+                stop_tone(BUZZER_A_PIN);
+            }
+            // Toca o buzzer se a vaga estiver reservada
+            else if (parking_lots[i].status == 2)
+            {
+                play_tone(BUZZER_A_PIN, 900);
+                sleep_ms(250); // Toca o buzzer por 250ms
+                stop_tone(BUZZER_A_PIN);
+            }
+        }
+    }
+}
+
 // Atualiza os sinais de saída
 void update_outputs()
 {
@@ -384,6 +425,10 @@ void update_outputs()
 
     // Atualiza o display OLED
     update_display();
+
+    // Atualiza o buzzer
+    update_buzzer();
+    INFO_printf("Outputs updated: Free parking lots: %d\n", free_parking_lots);
 }
 
 // Função de callback para os botões GPIO

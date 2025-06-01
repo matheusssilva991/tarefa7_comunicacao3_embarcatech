@@ -72,7 +72,6 @@ target_link_libraries(${PROJECT_NAME}
         hardware_timer
         hardware_clocks
         pico_cyw43_arch_lwip_threadsafe_background
-        hardware_adc
         hardware_pwm
         pico_lwip_mqtt
         pico_mbedtls

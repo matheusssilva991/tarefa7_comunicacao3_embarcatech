@@ -4,7 +4,6 @@
 
 #include "hardware/gpio.h" // Biblioteca de hardware de GPIO
 #include "hardware/irq.h"  // Biblioteca de hardware de interrupções
-#include "hardware/adc.h"  // Biblioteca de hardware para conversão ADC
 
 #include "lwip/apps/mqtt.h"      // Biblioteca LWIP MQTT -  fornece funções e recursos para conexão MQTT
 #include "lwip/apps/mqtt_priv.h" // Biblioteca que fornece funções e recursos para Geração de Conexões
@@ -104,6 +103,9 @@ typedef struct parking_lot
 // Inicializa o estacionamento
 void init_parking_lots(void);
 
+// Atualiza o LED RGB de acordo com a quantidade de vagas livres
+void update_led_rgb();
+
 // Função de callback para os botões GPIO
 void gpio_callback_handler(uint gpio, uint32_t events);
 
@@ -134,6 +136,7 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
 // Dados de entrada publicados
 static void mqtt_incoming_publish_cb(void *arg, const char *topic, u32_t tot_len);
 
+// Worker para publicar o status do estacionamento
 static void parking_status_worker_fn(async_context_t *context, async_at_time_worker_t *worker);
 static async_at_time_worker_t parking_status_worker = {.do_work = parking_status_worker_fn};
 
@@ -150,7 +153,8 @@ static volatile parking_lot_t parking_lots[PARKING_LOT_SIZE]; // Array de estrut
 static volatile int8_t current_parking_lot = 0;               // Vaga de estacionamento atual
 static volatile int last_a = 0, last_b = 0, last_sw = 0;
 const int debounce = 270; // Tempo de debounce para os botões
-volatile bool publish_parking_status_flag = false;
+volatile bool publish_parking_status_flag = true; // Sinaliza para publicar o status do estacionamento
+static volatile int free_parking_lots = 0;
 
 int main(void)
 {
@@ -160,13 +164,11 @@ int main(void)
     init_parking_lots();  // Inicializa o estacionamento
     init_btns();          // Inicializa os botões
     init_btn(BTN_SW_PIN); // Inicializa o botão do joystick
+    init_leds(); // Inicializa os LEDs
+
+    update_led_rgb(); // Atualiza o LED RGB de acordo com a quantidade de vagas livres
 
     INFO_printf("mqtt client starting\n");
-
-    // Inicializa o conversor ADC
-    adc_init();
-    adc_set_temp_sensor_enabled(true);
-    adc_select_input(4);
 
     // Cria registro com os dados do cliente
     static MQTT_CLIENT_DATA_T state;
@@ -280,6 +282,28 @@ void init_parking_lots()
     }
 }
 
+// Atualiza o LED RGB de acordo com a quantidade de vagas livres
+void update_led_rgb() {
+    free_parking_lots = 0; // Reseta a quantidade de vagas livres
+
+    // Verifica a quantidade de vagas livres
+    for (int i = 0; i < PARKING_LOT_SIZE; i++)
+    {
+        if (parking_lots[i].status == 0)
+            free_parking_lots++;
+    }
+
+    // Acende uma cor no LED RGB de acordo com a quantidade de vagas livres
+    if (free_parking_lots == 0)
+        set_led_red();
+    else if (free_parking_lots > PARKING_LOT_SIZE / 2)
+    {
+        set_led_green();
+    }
+    else
+        set_led_yellow();
+}
+
 // Função de callback para os botões GPIO
 void gpio_callback_handler(uint gpio, uint32_t events)
 {
@@ -309,6 +333,8 @@ void gpio_callback_handler(uint gpio, uint32_t events)
             parking_lots[current_parking_lot].status = 0;
 
         publish_parking_status_flag = true; // Sinaliza para publicar depois
+        update_led_rgb(); // Atualiza o LED RGB de acordo com a quantidade de vagas livres
+        INFO_printf("Parking lot %d status: %d\n", parking_lots[current_parking_lot].id, parking_lots[current_parking_lot].status);
     }
 }
 

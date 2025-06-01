@@ -109,6 +109,9 @@ void update_led_rgb();
 // Atualiza a matriz de LEDs
 void update_led_matrix(void);
 
+// Atualiza o display OLED
+void update_display();
+
 // Atualiza os sinais de saída
 void update_outputs();
 
@@ -158,6 +161,7 @@ static volatile int last_a = 0, last_b = 0, last_sw = 0;
 const int debounce = 270;                         // Tempo de debounce para os botões
 volatile bool publish_parking_status_flag = true; // Sinaliza para publicar o status do estacionamento
 static volatile int free_parking_lots = 0;
+ssd1306_t ssd;
 
 int main(void)
 {
@@ -169,6 +173,7 @@ int main(void)
     init_btn(BTN_SW_PIN); // Inicializa o botão do joystick
     init_leds();          // Inicializa os LEDs
     ws2812b_init(LED_MATRIX_PIN);
+    init_display(&ssd);
 
     update_outputs(); // Atualiza os LEDs e a matriz de LEDs
 
@@ -346,6 +351,28 @@ void update_led_matrix()
     ws2812b_write();
 }
 
+// Atualiza o display OLED
+void update_display()
+{
+    ssd1306_fill(&ssd, false); // Limpa a tela
+    draw_centered_text(&ssd, "Estacionamento", 0);
+    ssd1306_draw_string(&ssd, "Vagas:", 0, 15);
+
+    for (int i = 0; i < PARKING_LOT_SIZE; i++)
+    {
+        const char *status_text = (parking_lots[i].status == 0) ? "Livre" : (parking_lots[i].status == 1) ? "Ocupada"
+                                                                        : (parking_lots[i].status == 2)   ? "Reservada"
+                                                                                                            : "Indefinida";
+
+        char buffer[20];
+
+        snprintf(buffer, sizeof(buffer), "%d: %s", i + 1, status_text);
+        ssd1306_draw_string(&ssd, buffer, 5, (i * 10) + 25);
+    }
+
+    ssd1306_send_data(&ssd);        // Envia os dados para o display
+}
+
 // Atualiza os sinais de saída
 void update_outputs()
 {
@@ -354,6 +381,9 @@ void update_outputs()
 
     // Atualiza a matriz de LEDs
     update_led_matrix();
+
+    // Atualiza o display OLED
+    update_display();
 }
 
 // Função de callback para os botões GPIO

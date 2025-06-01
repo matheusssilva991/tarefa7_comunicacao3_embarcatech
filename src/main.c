@@ -115,9 +115,6 @@ static void pub_request_cb(__unused void *arg, err_t err);
 // Topico MQTT
 static const char *full_topic(MQTT_CLIENT_DATA_T *state, const char *name);
 
-// Controle do LED
-static void control_led(MQTT_CLIENT_DATA_T *state, bool on);
-
 // Publicar status do estacionamento
 static void publish_parking_status(MQTT_CLIENT_DATA_T *state);
 
@@ -152,7 +149,7 @@ static void dns_found(const char *hostname, const ip_addr_t *ipaddr, void *arg);
 static volatile parking_lot_t parking_lots[PARKING_LOT_SIZE]; // Array de estruturas para armazenar o status do estacionamento
 static volatile int8_t current_parking_lot = 0;               // Vaga de estacionamento atual
 static volatile int last_a = 0, last_b = 0, last_sw = 0;
-const int debounce = 270; // Tempo de debounce para os botões
+const int debounce = 270;                         // Tempo de debounce para os botões
 volatile bool publish_parking_status_flag = true; // Sinaliza para publicar o status do estacionamento
 static volatile int free_parking_lots = 0;
 
@@ -164,7 +161,7 @@ int main(void)
     init_parking_lots();  // Inicializa o estacionamento
     init_btns();          // Inicializa os botões
     init_btn(BTN_SW_PIN); // Inicializa o botão do joystick
-    init_leds(); // Inicializa os LEDs
+    init_leds();          // Inicializa os LEDs
 
     update_led_rgb(); // Atualiza o LED RGB de acordo com a quantidade de vagas livres
 
@@ -283,7 +280,8 @@ void init_parking_lots()
 }
 
 // Atualiza o LED RGB de acordo com a quantidade de vagas livres
-void update_led_rgb() {
+void update_led_rgb()
+{
     free_parking_lots = 0; // Reseta a quantidade de vagas livres
 
     // Verifica a quantidade de vagas livres
@@ -333,7 +331,7 @@ void gpio_callback_handler(uint gpio, uint32_t events)
             parking_lots[current_parking_lot].status = 0;
 
         publish_parking_status_flag = true; // Sinaliza para publicar depois
-        update_led_rgb(); // Atualiza o LED RGB de acordo com a quantidade de vagas livres
+        update_led_rgb();                   // Atualiza o LED RGB de acordo com a quantidade de vagas livres
         INFO_printf("Parking lot %d status: %d\n", parking_lots[current_parking_lot].id, parking_lots[current_parking_lot].status);
     }
 }
@@ -357,19 +355,6 @@ static const char *full_topic(MQTT_CLIENT_DATA_T *state, const char *name)
 #else
     return name;
 #endif
-}
-
-// Controle do LED
-static void control_led(MQTT_CLIENT_DATA_T *state, bool on)
-{
-    // Publish state on /state topic and on/off led board
-    const char *message = on ? "On" : "Off";
-    if (on)
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-    else
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-
-    mqtt_publish(state->mqtt_client_inst, full_topic(state, "/led/state"), message, strlen(message), MQTT_PUBLISH_QOS, MQTT_PUBLISH_RETAIN, pub_request_cb, state);
 }
 
 // Publicar status do estacionamento
@@ -418,10 +403,17 @@ static void unsub_request_cb(void *arg, err_t err)
 static void sub_unsub_topics(MQTT_CLIENT_DATA_T *state, bool sub)
 {
     mqtt_request_cb_t cb = sub ? sub_request_cb : unsub_request_cb;
-    mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/led"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
     mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/print"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
     mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/ping"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
     mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/exit"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
+
+    // Assina cada vaga individualmente
+    char topic[MQTT_TOPIC_LEN];
+    for (int i = 1; i <= PARKING_LOT_SIZE; i++)
+    {
+        snprintf(topic, sizeof(topic), "/parking/%d/reservation", i);
+        mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, topic), MQTT_SUBSCRIBE_QOS, cb, state, sub);
+    }
 }
 
 // Dados de entrada MQTT
@@ -438,14 +430,8 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
     state->data[len] = '\0';
 
     DEBUG_printf("Topic: %s, Message: %s\n", state->topic, state->data);
-    if (strcmp(basic_topic, "/led") == 0)
-    {
-        if (lwip_stricmp((const char *)state->data, "On") == 0 || strcmp((const char *)state->data, "1") == 0)
-            control_led(state, true);
-        else if (lwip_stricmp((const char *)state->data, "Off") == 0 || strcmp((const char *)state->data, "0") == 0)
-            control_led(state, false);
-    }
-    else if (strcmp(basic_topic, "/print") == 0)
+
+    if (strcmp(basic_topic, "/print") == 0)
     {
         INFO_printf("%.*s\n", len, data);
     }
@@ -459,6 +445,37 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
     {
         state->stop_client = true;      // stop the client when ALL subscriptions are stopped
         sub_unsub_topics(state, false); // unsubscribe
+    }
+
+    else if (strncmp(basic_topic, "/parking/", 9) == 0)
+    {
+        int id;
+        if (sscanf(basic_topic, "/parking/%d/reservation", &id) == 1)
+        {
+            if (id >= 1 && id <= PARKING_LOT_SIZE)
+            {
+                int index = id - 1;
+                if (parking_lots[index].status == 0)
+                {
+                    parking_lots[index].status = 2; // 2 = reservado
+                    parking_lots[index].reservation_start_time = get_absolute_time();
+                    update_led_rgb(); // Atualiza LED RGB
+                    INFO_printf("Reserva recebida para vaga %d\n", id);
+                }
+                else
+                {
+                    INFO_printf("Vaga %d já está ocupada\n", id);
+                }
+            }
+            else
+            {
+                INFO_printf("ID de vaga inválido: %d\n", id);
+            }
+        }
+    }
+    else
+    {
+        ERROR_printf("Unknown topic %s\n", state->topic);
     }
 }
 

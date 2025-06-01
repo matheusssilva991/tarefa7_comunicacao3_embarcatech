@@ -106,6 +106,12 @@ void init_parking_lots(void);
 // Atualiza o LED RGB de acordo com a quantidade de vagas livres
 void update_led_rgb();
 
+// Atualiza a matriz de LEDs
+void update_led_matrix(void);
+
+// Atualiza os sinais de saída
+void update_outputs();
+
 // Função de callback para os botões GPIO
 void gpio_callback_handler(uint gpio, uint32_t events);
 
@@ -162,8 +168,9 @@ int main(void)
     init_btns();          // Inicializa os botões
     init_btn(BTN_SW_PIN); // Inicializa o botão do joystick
     init_leds();          // Inicializa os LEDs
+    ws2812b_init(LED_MATRIX_PIN);
 
-    update_led_rgb(); // Atualiza o LED RGB de acordo com a quantidade de vagas livres
+    update_outputs(); // Atualiza os LEDs e a matriz de LEDs
 
     INFO_printf("mqtt client starting\n");
 
@@ -259,6 +266,7 @@ int main(void)
 
         if (publish_parking_status_flag)
         {
+            update_outputs(); // Atualiza os LEDs e a matriz de LEDs
             publish_parking_status(&state);
             publish_parking_status_flag = false;
         }
@@ -302,6 +310,52 @@ void update_led_rgb()
         set_led_yellow();
 }
 
+// Atualiza a matriz de LEDs
+void update_led_matrix()
+{
+    INFO_printf("Updating LED matrix\n");
+    int parking_lot_positions[PARKING_LOT_SIZE][4] = {
+        {15, 16, 23, 24},
+        {18, 19, 20, 21},
+        {3, 4, 5, 6},
+        {0, 1, 8, 9},
+    };
+
+    int color[3] = {0, 0, 0};
+
+    for (int i = 0; i < PARKING_LOT_SIZE; i++)
+    {
+        color[0] = 0; // Vermelho
+        color[1] = 0; // Verde
+        color[2] = 0; // Azul
+
+        if (parking_lots[i].status == 0)
+            color[1] = 8; // Verde
+        else if (parking_lots[i].status == 1)
+            color[0] = 8; // Vermelho
+        else if (parking_lots[i].status == 2)
+        {
+            color[0] = 4; // Amarelo
+            color[1] = 8;
+        }
+
+        for (int j = 0; j < 4; j++)
+            ws2812b_draw_point(parking_lot_positions[i][j], color);
+    }
+
+    ws2812b_write();
+}
+
+// Atualiza os sinais de saída
+void update_outputs()
+{
+    // Atualiza o LED RGB
+    update_led_rgb();
+
+    // Atualiza a matriz de LEDs
+    update_led_matrix();
+}
+
 // Função de callback para os botões GPIO
 void gpio_callback_handler(uint gpio, uint32_t events)
 {
@@ -331,7 +385,6 @@ void gpio_callback_handler(uint gpio, uint32_t events)
             parking_lots[current_parking_lot].status = 0;
 
         publish_parking_status_flag = true; // Sinaliza para publicar depois
-        update_led_rgb();                   // Atualiza o LED RGB de acordo com a quantidade de vagas livres
         INFO_printf("Parking lot %d status: %d\n", parking_lots[current_parking_lot].id, parking_lots[current_parking_lot].status);
     }
 }
@@ -406,14 +459,7 @@ static void sub_unsub_topics(MQTT_CLIENT_DATA_T *state, bool sub)
     mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/print"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
     mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/ping"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
     mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/exit"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
-
-    // Assina cada vaga individualmente
-    char topic[MQTT_TOPIC_LEN];
-    for (int i = 1; i <= PARKING_LOT_SIZE; i++)
-    {
-        snprintf(topic, sizeof(topic), "/parking/%d/reservation", i);
-        mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, topic), MQTT_SUBSCRIBE_QOS, cb, state, sub);
-    }
+    mqtt_sub_unsub(state->mqtt_client_inst, full_topic(state, "/parking/+/reservation"), MQTT_SUBSCRIBE_QOS, cb, state, sub);
 }
 
 // Dados de entrada MQTT
@@ -446,7 +492,6 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
         state->stop_client = true;      // stop the client when ALL subscriptions are stopped
         sub_unsub_topics(state, false); // unsubscribe
     }
-
     else if (strncmp(basic_topic, "/parking/", 9) == 0)
     {
         int id;
@@ -459,8 +504,11 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
                 {
                     parking_lots[index].status = 2; // 2 = reservado
                     parking_lots[index].reservation_start_time = get_absolute_time();
-                    update_led_rgb(); // Atualiza LED RGB
+                    update_outputs(); // Atualiza os LEDs e a matriz de LEDs
                     INFO_printf("Reserva recebida para vaga %d\n", id);
+
+                   // Publique imediatamente o novo status
+                    publish_parking_status(state);
                 }
                 else
                 {
@@ -473,10 +521,8 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
             }
         }
     }
-    else
-    {
-        ERROR_printf("Unknown topic %s\n", state->topic);
-    }
+
+
 }
 
 // Dados de entrada publicados

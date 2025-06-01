@@ -275,6 +275,21 @@ int main(void)
         cyw43_arch_poll();
         cyw43_arch_wait_for_work_until(make_timeout_time_ms(10000));
 
+        // Verifica expiração das reservas
+        for (int i = 0; i < PARKING_LOT_SIZE; i++)
+        {
+            if (parking_lots[i].status == 2)
+            {
+                int64_t diff_ms = absolute_time_diff_us(parking_lots[i].reservation_start_time, get_absolute_time()) / 1000;
+                if (diff_ms > 10000)
+                {
+                    parking_lots[i].status = 0;
+                    update_outputs();
+                    INFO_printf("Reserva da vaga %d expirada\n", i + 1);
+                }
+            }
+        }
+
         if (publish_parking_status_flag)
         {
             update_outputs(); // Atualiza os LEDs e a matriz de LEDs
@@ -324,7 +339,6 @@ void update_led_rgb()
 // Atualiza a matriz de LEDs
 void update_led_matrix()
 {
-    INFO_printf("Updating LED matrix\n");
     int parking_lot_positions[PARKING_LOT_SIZE][4] = {
         {15, 16, 23, 24},
         {18, 19, 20, 21},
